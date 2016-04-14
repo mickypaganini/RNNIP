@@ -50,9 +50,9 @@ int main(int argc, char* argv[]) {
   auto input_tensor_mapped = input_tensor.tensor<float, 2>(); // interact with input_tensor thru this version of it
 
   // Currently hard-coding in one event for testing
-  input_tensor_mapped(0,0) = -0.31724099;
-  input_tensor_mapped(0,1) = -4.04176151;
-
+  input_tensor_mapped(0,0) = 3.24311246;
+  input_tensor_mapped(0,1) = -5.56385935;
+ 
   // Create pair to insert into session->Run()
   std::vector<std::pair<std::string, tensorflow::Tensor> > input_tensors({{"Placeholder", input_tensor}});
 
