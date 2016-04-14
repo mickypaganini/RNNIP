@@ -1,109 +1,46 @@
-from sklearn.preprocessing import StandardScaler
-from keras.callbacks import Callback
-from keras.layers import containers, LSTM, GRU, Lambda
+''' 
+IPConvbidir.py -- functionality for training the bi-directional
+variant of the RCNN
+'''
+
+import numpy as np
+import sys
+import cPickle
+
+import deepdish.io as io
+
+from keras.layers import containers, GRU, LSTM, Highway, Dense, Dropout, MaxoutDense, Activation
 from keras.models import Sequential
-from keras.layers.core import Highway, Dense, Dropout, AutoEncoder, MaxoutDense, Activation, Flatten
-from keras.layers.embeddings import Embedding
-from keras.layers.noise import GaussianNoise
-from keras import regularizers
-from keras.callbacks import EarlyStopping, ModelCheckpoint, Callback
-from keras.utils import np_utils
+from keras.callbacks import EarlyStopping, ModelCheckpoint
 from keras.layers.convolutional import Convolution1D, MaxPooling1D
 from keras.models import Graph
 
-from sklearn.metrics import roc_curve, auc
 
-import pandautils as pup
-import pandas as pd
-import numpy as np
-import os 
 
-import deepdish.io as io
-import sys
-
-n_tracks = 30 # max number of tracks to consider per jet
-
-# ------------------------------------------
-'''
-def sort_tracks(trk, data, SORT_COL, n_tracks):
-    
-    for i, jet in trk.iterrows(): # i = jet number, jet = all the variables for that jet
-        
-        if i % 10000 == 0:
-            print 'Processing event %s of %s' % (i, trk.shape[0])
-        
-        # tracks = [[pt's], [eta's], ...] of tracks for each jet
-        tracks = np.array([v.tolist() for v in jet.get_values()], dtype='float32')[:, (np.argsort(jet[SORT_COL]))[::-1]]
-        
-        ntrk = tracks.shape[1] # total number of tracks per jet
-        
-        data[i, :(min(ntrk, n_tracks)), :] = tracks.T[:(min(ntrk, n_tracks)), :] # take all tracks unless there are more than n_tracks
-        
-        data[i, (min(ntrk, n_tracks)):, :  ] = -999 # default value for missing tracks
-
-# ------------------------------------------
-
-def scale(data, n_variables):
-    
-    scale = {}
-    for v in xrange(n_variables):
-        print 'Scaling feature %s of %s.' % (v, n_variables)
-        f = data[:, :, v]
-        slc = f[f != -999]
-        m, s = slc.mean(), slc.std()
-        slc -= m
-        slc /= s
-        data[:, :, v][f != -999] = slc.astype('float32')
-        scale[v] = {'mean' : m, 'sd' : s}
-
-# ------------------------------------------
-
-def process_data(trk):
-
-    # -- classes
-    y = trk.jet_truthflav.values
-    ip3d = trk[ ['jet_ip3d_pu', 'jet_ip3d_pb', 'jet_ip3d_pc'] ] # new df with ip3d vars only
-
-    trk.drop(['jet_ip3d_pu', 'jet_ip3d_pb', 'jet_ip3d_pc', 'jet_truthflav'], axis=1, inplace=True) # no longer needed - not an input
-    trk['d0z0sig_unsigned'] = (trk.jet_trk_d0sig.copy() ** 2 + trk.jet_trk_z0sig.copy() ** 2).pow(0.5)
-    #track_inputs += ['d0z0sig_unsigned']
-    
-    n_variables = trk.shape[1] #len(track_inputs) # or trk.shape[1]
-
-    data = np.zeros((trk.shape[0], n_tracks, n_variables), dtype='float32')
-
-    # -- variable being used to sort tracks
-    SORT_COL = 'd0z0sig_unsigned'
-
-    # -- call functions to build X (= data)
-    sort_tracks(trk, data, SORT_COL, n_tracks)
-    print 'Scaling features ...'
-    scale(data, n_variables)
-
-    # -- default values
-    data[np.isnan(data)] = 0.0
-    data[data == -999] = 0.0
-
-    # -- make classes pretty for keras
-    for ix, flav in enumerate(np.unique(y)):
-        y[y == flav] = ix
-    y_train = np_utils.to_categorical(y, len(np.unique(y)))
-
-    return {'X' : data, 'y' : y_train, 'ip3d' : ip3d}
-'''
-# ------------------------------------------
+# max number of tracks to consider per jet
+# we zero pad if we dont have enough, and we truncate
+# if we have too many
+N_TRACKS = 30
 
 def build_graph(n_variables):
-
+    '''
+    Creates the Graph component of the model, i.e., this creates the 
+    conv+gru  with bi-directional
+    '''
     nb_feature_maps = 64
     ngram_filters = [1, 2, 3, 4, 5] #, 6, 7, 8]
 
     graph = Graph()
-    graph.add_input(name='data', input_shape= (n_tracks, n_variables))
+    graph.add_input(name='data', input_shape= (N_TRACKS, n_variables))
 
     for n_gram in ngram_filters:
         graph.add_node(
-            Convolution1D(nb_feature_maps, n_gram, activation='relu', input_shape=(n_tracks, n_variables)),
+            Convolution1D(
+                nb_feature_maps, 
+                n_gram, 
+                activation='relu', 
+                input_shape=(N_TRACKS, n_variables)
+            ),
             name='conv_%s' % n_gram,
             input='data'
         )
@@ -131,12 +68,14 @@ def build_graph(n_variables):
 
     return graph
 
-# ------------------------------------------
 
 def build_graph_noCNN(n_variables):
-    
+    '''
+    Creates the Graph component of the model, i.e., this creates the 
+    gru component with no CNN
+    '''
     graph = Graph()
-    graph.add_input(name='data', input_shape= (n_tracks, n_variables))
+    graph.add_input(name='data', input_shape= (N_TRACKS, n_variables))
     
     n_gram = 1
 
@@ -163,10 +102,19 @@ def build_graph_noCNN(n_variables):
 
     return graph
 
-# ------------------------------------------ 
-
 def plot_ROC(y_test, yhat, ip3d, MODEL_FILE):
+    ''' 
+    plot a ROC curve for the discriminant
     
+    Args:
+    -----
+        y_test: the truth labels for the trst set
+        yhat: the predicted probabilities of each class in the test set
+    
+    Returns:
+    --------
+        a mpl.figure
+    '''
     from viz import calculate_roc, ROC_plotter, add_curve
     
     # -- bring classes back to usual format: [0,2,3,0,1,2,0,2,2,...]
@@ -192,49 +140,12 @@ def plot_ROC(y_test, yhat, ip3d, MODEL_FILE):
     print 'Pickling ROC curves'
     import cPickle
     cPickle.dump(discs[MODEL_FILE], open(MODEL_FILE + '.pkl', 'wb'), cPickle.HIGHEST_PROTOCOL)
-#    cPickle.dump(discs['IP3D'], open('ip3d.pkl', 'wb'), cPickle.HIGHEST_PROTOCOL)
 
     print 'Plotting'
     fg = ROC_plotter(discs, title=r'Impact Parameter Taggers', min_eff = 0.5, max_eff=1.0, logscale=True)
 
     return fg
 
-# ------------------------------------------
-'''
-if __name__ == '__main__':
-
-    
-    track_inputs = ['jet_trk_pt', 'jet_trk_phi', 'jet_trk_d0', 
-                    'jet_trk_z0', 'jet_trk_d0sig', 'jet_trk_z0sig', 
-                    'jet_trk_chi2', 'jet_trk_nInnHits', 
-                    'jet_trk_nNextToInnHits', 'jet_trk_nBLHits', 
-                    'jet_trk_nsharedBLHits', 'jet_trk_nsplitBLHits', 
-                    'jet_trk_nPixHits', 'jet_trk_nsharedPixHits', 
-                    'jet_trk_nsplitPixHits', 'jet_trk_nSCTHits', 
-                    'jet_trk_nsharedSCTHits', 'jet_trk_expectBLayerHit']
-
-    
-    # -- import data into df called trk
-    print 'Loading data...'
-    if not (os.path.isfile('./data/train_dict_IPConv.h5') & os.path.isfile('./data/test_dict_IPConv.h5')):
-    
-        trk_train = pup.root2panda('./data/train/*410000_00*.root', 'JetCollection', branches = track_inputs + ['jet_truthflav' , 'jet_ip3d_pu', 'jet_ip3d_pb', 'jet_ip3d_pc'])
-        trk_test  = pup.root2panda('./data/test/*410000*.root', 'JetCollection', branches = track_inputs + ['jet_truthflav' , 'jet_ip3d_pu', 'jet_ip3d_pb', 'jet_ip3d_pc'])
-        # TEMP?
-        #trk_val = pup.root2panda('./data/train/*01_v1.root', 'JetCollection', branches = track_inputs + ['jet_truthflav' , 'jet_ip3d_pu', 'jet_ip3d_pb', 'jet_ip3d_pc'])
-
-        print 'Processing training sample ...'
-        train_dict = process_data(trk_train)
-        del trk_train
-        io.save('./data/train_dict_IPConv.h5', train_dict)
-
-        print 'Processing test sample...'
-        test_dict = process_data(trk_test)
-        del trk_test
-        io.save('./data/test_dict_IPConv.h5', test_dict)
-    '''
-
-#    else:
 
 def main(MODEL_FILE):
 
@@ -245,29 +156,19 @@ def main(MODEL_FILE):
     y_train = train_dict['y']
     n_features = X_train.shape[2]    
     
-    # print 'Processing validation sample ...'
-    # val_dict = process_data(trk_val)
-    # X_val = val_dict['X']
-    # y_val = val_dict['y']
-    # io.save('./data/val_dict_IPConv.h5', val_dict)
-    # validation_data = (X_val, y_val)
-    # print validation_data
-
     X_test = test_dict['X']
     y_test = test_dict['y']
     ip3d = test_dict['ip3d'] # this is a df
 
-
     print 'Building model...'
     
     if (MODEL_FILE == 'CRNN'):
-        graph = build_graph(n_features) #trk_train.shape[1])
+        graph = build_graph(n_features)
 
         model = Sequential()
 
         model.add(graph)
-        
-        #model.add(MaxoutDense(64, 5, input_shape=graph.nodes['dropout'].output_shape[1:]))
+
         model.add(Dense(64))
 
     elif (MODEL_FILE == 'RNN'):
@@ -275,11 +176,8 @@ def main(MODEL_FILE):
         graph = build_graph_noCNN(n_features)
         
         model = Sequential()
-        #model.add(GRU(25, input_shape=(n_tracks, n_features)))
-        #model.add(Dropout(0.2))
         model.add(graph)
 
-        #model.add(MaxoutDense(64, 5, input_shape=graph.nodes['dropout'].output_shape[1:]))
         model.add(Dense(64))
   
     model.add(Dropout(0.4))
@@ -314,11 +212,7 @@ def main(MODEL_FILE):
 
     print 'Saving weights...'
     model.save_weights('./weights/ip3d-replacement_' + MODEL_FILE + '.h5', overwrite=True)
-
-    # DOESNT WORK!
-    # with open('./ip3d-replacement.yaml', 'wb') as f:
-    #     f.write(graph.to_yaml())
-
+    
     print 'Testing...'
     yhat = model.predict(X_test, verbose = True, batch_size = 512) 
 
