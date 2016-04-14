@@ -95,9 +95,8 @@ def calculate_roc(labels, discriminant, weights=None, bins = 2000):
 
 
 
-def ROC_plotter(curves, min_eff = 0, max_eff = 1, linewidth = 1.4, 
-    pp = False, signal = "", background = "", 
-    title = "", logscale = True, ymax=10**4, ymin=1):   
+def ROC_plotter(curves, min_eff=0, max_eff=1, linewidth=1.4, pp=False, signal="", 
+    background="", title="", logscale=True, ymax=10**4, ymin=1):   
 
     fig = plt.figure(figsize=(11.69, 8.27), dpi=100)
     ax = fig.add_subplot(111)
@@ -134,10 +133,10 @@ def add_curve(name, color, curve_pair, dictref):
     dictref.update(
         {
             name : {
-                        'efficiency' : curve_pair[0], 
-                        'rejection' : curve_pair[1], 
-                        'color' : color
-                    }
+                'efficiency' : curve_pair[0], 
+                'rejection' : curve_pair[1], 
+                'color' : color
+            }
         }
     )
 
