@@ -1,6 +1,7 @@
 This folder contains some of the files that are needed to re-assemble and load neural nets saved as protobuffers for prediction.
 
-It relies on the assumption that a protobuf file called `graph.pb` and a checkpoint file called `model-weights.ckpt` were saved while training NN in Keras using the TensorFlow backend. The `IPConv.py` and `IPConvbidir.py` scripts in the previos directory contain a section that produces these files. The Jupyter Notebook `DummyNet.ipynb` does the same thing, but using dummy shallow net as an example.
+It relies on the assumption that a protobuf file called `graph.pb` and a checkpoint file called `model-weights.ckpt` were saved while training NN in Keras using the TensorFlow backend. The `IPConv.py` and `IPConvbidir.py` scripts in the previos directory contain a section that produces these files. The Jupyter Notebook `DummyNet.ipynb` does the same thing, but using dummy shallow net as an example. To run this notebook using the TensorFlow backend, use the command:
+` KERAS_BACKEND=tensorflow ipython notebook DummyNet.ipynb`
 
 `graph.pb` stores all the nodes in the NN, defining the architecture and its logic. </br>
 `model-weights.ckpt` contains the trained weights of the neural network.
