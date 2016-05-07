@@ -7,6 +7,7 @@ import deepdish.io as io
 from keras.utils import np_utils
 import pandautils as pup
 
+N_TRACKS = 30
 
 def sort_tracks(trk, data, SORT_COL, n_tracks):
     ''' 
@@ -102,13 +103,13 @@ def process_data(trk):
 
     n_variables = trk.shape[1]
 
-    data = np.zeros((trk.shape[0], n_tracks, n_variables), dtype='float32')
+    data = np.zeros((trk.shape[0], N_TRACKS, n_variables), dtype='float32')
 
     # -- variable being used to sort tracks                                                                                                                                                                      
     SORT_COL = 'd0z0sig_unsigned'
 
     # -- call functions to build X (= data)                                                                                                                                                                      
-    sort_tracks(trk, data, SORT_COL, n_tracks)
+    sort_tracks(trk, data, SORT_COL, N_TRACKS)
     
     print 'Scaling features ...'
     scale(data, n_variables)
@@ -138,6 +139,7 @@ if __name__ == '__main__':
                     'jet_trk_nsplitPixHits', 'jet_trk_nSCTHits',
                     'jet_trk_nsharedSCTHits', 'jet_trk_expectBLayerHit'] # 2 more to be added in `process_data`
 
+    print 'Loading dataframes...'
     # -- currently only training and testing on one file each!
     trk_train = pup.root2panda(
         './data/train/*410000_00*.root', 
