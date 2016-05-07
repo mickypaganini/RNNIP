@@ -88,13 +88,17 @@ def process_data(trk):
     # -- classes                                                                                                                                                                                                 
     y = trk.jet_truthflav.values
 
-    # new df with ip3d vars only
+    # -- new df with ip3d vars only
     ip3d = trk[ ['jet_ip3d_pu', 'jet_ip3d_pb', 'jet_ip3d_pc'] ] 
 
+    # -- add new variable to the df as input features
+    # replace jet_trk_phi with jet_trk_DPhi 
+    trk['jet_trk_DPhi'] = trk['jet_trk_phi'] - trk['jet_phi']
+    # variable also used for ordering tracks
+    trk['d0z0sig_unsigned'] = (trk.jet_trk_d0sig.copy() ** 2 + trk.jet_trk_z0sig.copy() ** 2).pow(0.5)
 
-    trk.drop(['jet_ip3d_pu', 'jet_ip3d_pb', 'jet_ip3d_pc', 'jet_truthflav'], axis=1, inplace=True) # no longer needed - not an input                                                                             
-    
-    trk['d0z0sig_unsigned'] = (trk.jet_trk_d0sig.copy() ** 2 + trk.jet_trk_z0sig.copy() ** 2).pow(0.5)                                                                                                                                                                  
+    # -- drop variables from the df that we do not want to use for training
+    trk.drop(['jet_ip3d_pu', 'jet_ip3d_pb', 'jet_ip3d_pc', 'jet_truthflav', 'jet_trk_phi', 'jet_phi'], axis=1, inplace=True) # no longer needed - not an input                                                                                                                                                                                                                                               
 
     n_variables = trk.shape[1]
 
@@ -114,7 +118,7 @@ def process_data(trk):
     data[np.isnan(data)] = 0.0
     data[data == -999] = 0.0
 
-    # -- make classes pretty for keras                                                                                                                                                                           
+    # -- make classes pretty for keras (4 classes: b vs c vs l vs tau)                                                                                                                                                                          
     for ix, flav in enumerate(np.unique(y)):
         y[y == flav] = ix
     y_train = np_utils.to_categorical(y, len(np.unique(y)))
@@ -125,26 +129,26 @@ def process_data(trk):
 
 if __name__ == '__main__':
 
-    track_inputs = ['jet_trk_pt', 'jet_trk_phi', 'jet_trk_d0',
+    track_inputs = ['jet_trk_pt', 'jet_trk_d0',
                     'jet_trk_z0', 'jet_trk_d0sig', 'jet_trk_z0sig',
                     'jet_trk_chi2', 'jet_trk_nInnHits',
                     'jet_trk_nNextToInnHits', 'jet_trk_nBLHits',
                     'jet_trk_nsharedBLHits', 'jet_trk_nsplitBLHits',
                     'jet_trk_nPixHits', 'jet_trk_nsharedPixHits',
                     'jet_trk_nsplitPixHits', 'jet_trk_nSCTHits',
-                    'jet_trk_nsharedSCTHits', 'jet_trk_expectBLayerHit']
+                    'jet_trk_nsharedSCTHits', 'jet_trk_expectBLayerHit'] # 2 more to be added in `process_data`
 
     # -- currently only training and testing on one file each!
     trk_train = pup.root2panda(
         './data/train/*410000_00*.root', 
         'JetCollection', 
-        branches = track_inputs + ['jet_truthflav' , 'jet_ip3d_pu', 'jet_ip3d_pb', 'jet_ip3d_pc']
+        branches = track_inputs + ['jet_truthflav' , 'jet_ip3d_pu', 'jet_ip3d_pb', 'jet_ip3d_pc', 'jet_phi', 'jet_trk_phi']
     )
 
     trk_test  = pup.root2panda(
         './data/test/*410000*.root', 
         'JetCollection', 
-        branches = track_inputs + ['jet_truthflav' , 'jet_ip3d_pu', 'jet_ip3d_pb', 'jet_ip3d_pc']
+        branches = track_inputs + ['jet_truthflav' , 'jet_ip3d_pu', 'jet_ip3d_pb', 'jet_ip3d_pc', 'jet_phi', 'jet_trk_phi']
     )
 
     print 'Processing training sample ...'
