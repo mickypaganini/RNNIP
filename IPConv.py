@@ -13,7 +13,8 @@ from keras.layers import containers, GRU, Highway, Dense, Dropout, MaxoutDense, 
 from keras.models import Sequential
 from keras.callbacks import EarlyStopping, ModelCheckpoint
 from keras.layers.convolutional import Convolution1D, MaxPooling1D
-from keras.models import Graph
+from keras.models import Sequential
+from keras.legacy.models import Graph
 
 
 
@@ -36,7 +37,7 @@ def build_graph(n_variables):
     graph.add_input(name='data', input_shape= (N_TRACKS, n_variables))
 
     for n_gram in ngram_filters:
-        sequential = containers.Sequential()
+        sequential = Sequential()
         sequential.add(
             Convolution1D(
                 nb_feature_maps, 
