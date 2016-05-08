@@ -1,9 +1,11 @@
 '''
 dataprocessing.py -- utilities for processing track level ntuples
 '''
+import json
 import numpy as np
 import pandas as pd
 import deepdish.io as io
+import keras
 from keras.utils import np_utils
 import pandautils as pup
 
@@ -47,7 +49,7 @@ def sort_tracks(trk, data, SORT_COL, n_tracks):
         data[i, (min(ntrk, n_tracks)):, :  ] = -999 
 
 
-def scale(data, n_variables):
+def scale(data, var_names):
     ''' 
     Args:
     -----
@@ -60,18 +62,18 @@ def scale(data, n_variables):
     '''
     
     scale = {}
-    for v in xrange(n_variables):
-        print 'Scaling feature %s of %s.' % (v, n_variables)
+    for v in xrange(len(var_names)):
+        print 'Scaling feature %s of %s.' % (v, len(var_names))
         f = data[:, :, v]
         slc = f[f != -999]
         m, s = slc.mean(), slc.std()
         slc -= m
         slc /= s
         data[:, :, v][f != -999] = slc.astype('float32')
-        scale[v] = {'mean' : m, 'sd' : s}
+        scale[v] = {'name' : var_names[v], 'mean' : m, 'sd' : s}
+    return scale
 
-
-def process_data(trk):
+def process_data(trk, savevars=False):
     ''' 
     takes a dataframe directly from ROOT files and 
     processes, sorts, and scales the data for you
@@ -86,13 +88,13 @@ def process_data(trk):
     
     '''
     
-    # -- classes                                                                                                                                                                                                 
+    # -- targets                                                                                                                                                                                                 
     y = trk.jet_truthflav.values
 
-    # -- new df with ip3d vars only
+    # -- new df with ip3d vars only for later comparison
     ip3d = trk[ ['jet_ip3d_pu', 'jet_ip3d_pb', 'jet_ip3d_pc'] ] 
 
-    # -- add new variable to the df as input features
+    # -- add new variables to the df as input features
     # replace jet_trk_phi with jet_trk_DPhi 
     trk['jet_trk_DPhi'] = trk['jet_trk_phi'] - trk['jet_phi']
     # variable also used for ordering tracks
@@ -102,6 +104,7 @@ def process_data(trk):
     trk.drop(['jet_ip3d_pu', 'jet_ip3d_pb', 'jet_ip3d_pc', 'jet_truthflav', 'jet_trk_phi', 'jet_phi'], axis=1, inplace=True) # no longer needed - not an input                                                                                                                                                                                                                                               
 
     n_variables = trk.shape[1]
+    var_names = trk.keys()
 
     data = np.zeros((trk.shape[0], N_TRACKS, n_variables), dtype='float32')
 
@@ -112,7 +115,7 @@ def process_data(trk):
     sort_tracks(trk, data, SORT_COL, N_TRACKS)
     
     print 'Scaling features ...'
-    scale(data, n_variables)
+    scale_params = scale(data, var_names) # dictionary with var name, mean and sd
 
     # -- default values    
     # we convert the default -999 --> 0 for padding purposes.                                                                                                                                                                                      
@@ -123,6 +126,23 @@ def process_data(trk):
     for ix, flav in enumerate(np.unique(y)):
         y[y == flav] = ix
     y_train = np_utils.to_categorical(y, len(np.unique(y)))
+
+    if savevars:
+        # -- write variable json for lwtnn keras2json converter
+        variable_dict = {
+            'inputs': [{
+                'name': scale_params[v]['name'],
+                'scale': float(1.0 / scale_params[v]['sd']),
+                'offset': float(-scale_params[v]['mean']),
+                'default': None
+                } 
+                for v in xrange(n_variables)],
+            'class_labels': np.unique(y).tolist(),
+            'keras_version': keras.__version__
+        }
+        print variable_dict
+        with open('variables.json', 'wb') as jf:
+            json.dump(variable_dict, jf)
 
     return {'X' : data, 'y' : y_train, 'ip3d' : ip3d}
 
@@ -154,7 +174,7 @@ if __name__ == '__main__':
     )
 
     print 'Processing training sample ...'
-    train_dict = process_data(trk_train)
+    train_dict = process_data(trk_train, savevars=True)
     del trk_train
     io.save('./data/train_dict_IPConv.h5', train_dict)
 
