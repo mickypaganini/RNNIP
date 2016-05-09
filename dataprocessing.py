@@ -138,7 +138,10 @@ def process_data(trk, savevars=False):
                 } 
                 for v in xrange(n_variables)],
             'class_labels': np.unique(y).tolist(),
-            'keras_version': keras.__version__
+            'keras_version': keras.__version__,
+            'miscellaneous': {
+                'sort_by': SORT_COL
+            }
         }
         print variable_dict
         with open('variables.json', 'wb') as jf:
