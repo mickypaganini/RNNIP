@@ -9,7 +9,7 @@ import cPickle
 
 import deepdish.io as io
 
-from keras.layers import containers, GRU, Highway, Dense, Dropout, MaxoutDense, Activation
+from keras.layers import GRU, Highway, Dense, Dropout, MaxoutDense, Activation, Masking
 from keras.models import Sequential
 from keras.callbacks import EarlyStopping, ModelCheckpoint
 from keras.layers.convolutional import Convolution1D, MaxPooling1D
@@ -17,12 +17,12 @@ from keras.models import Sequential
 from keras.legacy.models import Graph
 
 
-
 # max number of tracks to consider per jet
 # we zero pad if we dont have enough, and we truncate
 # if we have too many
 N_TRACKS = 30 
-
+RUN_NAME = 'MyTrkSel'
+SAVE_PROTOBUF = False
 
 def build_graph(n_variables):
     '''
@@ -94,7 +94,7 @@ def plot_ROC(y_test, yhat, ip3d, MODEL_FILE):
 
     print 'Pickling ROC curves'
     
-    cPickle.dump(discs[MODEL_FILE], open(MODEL_FILE + '.pkl', 'wb'), cPickle.HIGHEST_PROTOCOL)
+    cPickle.dump(discs[MODEL_FILE], open(MODEL_FILE + RUN_NAME +'.pkl', 'wb'), cPickle.HIGHEST_PROTOCOL)
 
     print 'Plotting'
     fg = ROC_plotter(discs, title=r'Impact Parameter Taggers', min_eff = 0.5, max_eff=1.0, logscale=True)
@@ -103,19 +103,19 @@ def plot_ROC(y_test, yhat, ip3d, MODEL_FILE):
 
 def main(MODEL_FILE):
 
-    test_dict = io.load('./data/test_dict_IPConv.h5')
-    train_dict = io.load('./data/train_dict_IPConv.h5')
-
+    print "Loading hdf5's..."
+    test_dict = io.load('./data/test_dict_IPConv_ntuple_'+ RUN_NAME +'.h5')
+    train_dict = io.load('./data/train_dict_IPConv_ntuple_'+ RUN_NAME +'.h5')
+    
     X_train = train_dict['X']
-    y_train = train_dict['y']
-    n_features = X_train.shape[2]    
+    y_train = train_dict['y']    
 
     X_test = test_dict['X']
     y_test = test_dict['y']
+    n_features = X_test.shape[2]
 
     # this is a df
     ip3d = test_dict['ip3d'] 
-
 
     print 'Building model...'
     
@@ -125,18 +125,19 @@ def main(MODEL_FILE):
         model = Sequential()
 
         model.add(graph)
-        # removing because of tensorflow
-        #model.add(MaxoutDense(64, 5, input_shape=graph.nodes['dropout'].output_shape[1:]))
+        # remove Maxout for tensorflow
+        model.add(MaxoutDense(64, 5, input_shape=graph.nodes['dropout'].output_shape[1:]))
         model.add(Dense(64))
 
     elif (MODEL_FILE == 'RNN'):
 
         model = Sequential()
-        model.add(GRU(25, input_shape=(N_TRACKS, n_features))) #GRU
-        model.add(Dropout(0.2))
+        model.add(Masking(mask_value=-999, input_shape=(N_TRACKS, n_features)))
+        model.add(GRU(25))#, input_shape=(N_TRACKS, n_features))) #GRU
+        model.add(Dropout(0.2)) #0.2
     
-        # removing because of tensorflow
-        #model.add(MaxoutDense(64, 5))  #, input_shape=graph.nodes['dropout'].output_shape[1:]))
+        # remove Maxout for tensorflow
+        model.add(MaxoutDense(64, 5))  #, input_shape=graph.nodes['dropout'].output_shape[1:]))
         model.add(Dense(64))
 
   
@@ -158,9 +159,9 @@ def main(MODEL_FILE):
         model.fit(X_train, y_train, batch_size=512,
             callbacks = [
                 EarlyStopping(verbose=True, patience=20, monitor='val_loss'),
-                ModelCheckpoint(MODEL_FILE + '-progress', monitor='val_loss', verbose=True, save_best_only=True)
+                ModelCheckpoint(MODEL_FILE + RUN_NAME +'-progress', monitor='val_loss', verbose=True, save_best_only=True)
             ],
-        nb_epoch=2, 
+        nb_epoch=100, 
         validation_split = 0.2, 
         show_accuracy=True) 
         
@@ -168,41 +169,43 @@ def main(MODEL_FILE):
         print 'Training ended early.'
 
     # -- load in best network
-    model.load_weights(MODEL_FILE + '-progress')
+    model.load_weights(MODEL_FILE + RUN_NAME +'-progress')
     
+    if (SAVE_PROTOBUF):
+        print 'Saving protobuf'
+        # write out to a new directory called models
+        # the actual graph file is graph.pb
+        # the graph def is in the global session
+        import tensorflow as tf
+        import keras.backend.tensorflow_backend as tfbe
 
-    print 'Saving protobuf'
-    # write out to a new directory called models
-    # the actual graph file is graph.pb
-    # the graph def is in the global session
-    import tensorflow as tf
-    import keras.backend.tensorflow_backend as tfbe
+        sess = tfbe._SESSION
 
-    sess = tfbe._SESSION
+        saver = tf.train.Saver()
+        tf.train.write_graph(sess.graph_def, 'models/', 'graph.pb', as_text=False)    
 
-    saver = tf.train.Saver()
-    tf.train.write_graph(sess.graph_def, 'models/', 'graph.pb', as_text=False)    
+        save_path = saver.save(sess, "./model-weights.ckpt")
+        print "Model saved in file: %s" % save_path
+        
+        print saver.as_saver_def().filename_tensor_name
+        print saver.as_saver_def().restore_op_name
 
-    save_path = saver.save(sess, "./model-weights.ckpt")
-    print "Model saved in file: %s" % save_path
-    
-    print saver.as_saver_def().filename_tensor_name
-    print saver.as_saver_def().restore_op_name
+        print model.get_output()
 
-    print model.get_output()
     print 'Saving weights...'
-    model.save_weights('./weights/ip3d-replacement_' + MODEL_FILE + '.h5', overwrite=True)
+    model.save_weights('./weights/ip3d-replacement_' + MODEL_FILE + RUN_NAME +'.h5', overwrite=True)
 
     json_string = model.to_json()
-    open(MODEL_FILE + '.json', 'w').write(json_string)
+    open(MODEL_FILE + RUN_NAME +'.json', 'w').write(json_string)
 
     print 'Testing...'
     yhat = model.predict(X_test, verbose = True, batch_size = 512) 
-
+    io.save('yhat'+ RUN_NAME +'.h5', yhat) 
+     
     print 'Plotting ROC...'
     fg = plot_ROC(y_test, yhat, ip3d, MODEL_FILE)
     #plt.show()
-    fg.savefig('./plots/roc_' + MODEL_FILE + '.pdf')
+    fg.savefig('./plots/roc' + MODEL_FILE + RUN_NAME +'.pdf')
         
 if __name__ == '__main__': 
     import argparse
