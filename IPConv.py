@@ -138,7 +138,7 @@ def main(MODEL_FILE):
     
         # remove Maxout for tensorflow
         model.add(MaxoutDense(64, 5))  #, input_shape=graph.nodes['dropout'].output_shape[1:]))
-        model.add(Dense(64))
+        model.add(Dense(64, activation='relu'))
 
   
     model.add(Dropout(0.4))
