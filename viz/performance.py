@@ -117,8 +117,8 @@ def ROC_plotter(curves, min_eff=0, max_eff=1, linewidth=1.4, pp=False, signal=""
     if logscale == True:    
         ax.set_yscale('log')
 
-    ax.set_xlabel(r'$\varepsilon_{\mathrm{b}}$')
-    ax.set_ylabel(r"$1 / \varepsilon_{\mathrm{u}}$")
+    ax.set_xlabel(r'$\varepsilon_{\mathrm{signal}}$')
+    ax.set_ylabel(r"$1 / \varepsilon_{\mathrm{background}}$")
 
     plt.legend() 
     plt.title(r''+title)
