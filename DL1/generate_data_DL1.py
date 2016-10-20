@@ -28,6 +28,8 @@ from sklearn.cross_validation import train_test_split
 from rootpy.vector import LorentzVector, Vector3
 import matplotlib.pyplot as plt
 
+OUTNAME = '_large_'
+
 def main(iptagger):
     configure_logging()
     logger = logging.getLogger("generate_data_DL1")
@@ -57,8 +59,9 @@ def main(iptagger):
     X = df_flat[training_vars].values
     pt_col = np.argwhere(np.array(training_vars) == 'jet_pt')[0][0]
     eta_col = np.argwhere(np.array(training_vars) == 'abs(jet_eta)')[0][0]
-    #w = reweight_to_b(X, y, pt_col, eta_col)
-    w = reweight_to_l(X, y, pt_col, eta_col)
+    w = reweight_to_b(X, y, pt_col, eta_col)
+    #w = reweight_to_l(X, y, pt_col, eta_col)
+    del df_flat
 
     logger.info('Shuffling, splitting, scaling...')
     ix = np.array(range(len(y)))
@@ -84,8 +87,8 @@ def main(iptagger):
     }
 
     logger.info('Saving dictionaries to hdf5...')
-    io.save(os.path.join('..', 'data', 'DL1-' + iptagger + '-train-db.h5'), train)
-    io.save(os.path.join('..', 'data', 'DL1-' + iptagger + '-test-db.h5'), test)
+    io.save(os.path.join('..', 'data', 'DL1-' + iptagger + OUTNAME + '-train-db.h5'), train)
+    io.save(os.path.join('..', 'data', 'DL1-' + iptagger + OUTNAME + '-test-db.h5'), test)
 
 
 # -----------------------------------------------------------------    

@@ -1,3 +1,4 @@
+# -*- coding: utf-8 -*-
 '''
 Info:
     This script can be run directly after
@@ -27,10 +28,11 @@ from sklearn.preprocessing import LabelEncoder
 from viz import add_curve, calculate_roc, ROC_plotter
 import cPickle
 
-MODEL_NAME = '5l'
+MODEL_NAME = '5l_moredata'
+INPUT_NAME = '_large_'
 
 def main(iptagger):
-	train = io.load(open(os.path.join('..', 'data', 'DL1-' + iptagger + '-train-db.h5'), 'rb'))
+	train = io.load(open(os.path.join('..', 'data', 'DL1-' + iptagger + INPUT_NAME + '-train-db.h5'), 'rb'))
 	le = LabelEncoder()
 
 	net = Sequential()
@@ -52,10 +54,13 @@ def main(iptagger):
 	net.summary()
 	net.compile('adam', 'sparse_categorical_crossentropy', metrics=['accuracy'])
 
+	weights_path = iptagger + '-' + MODEL_NAME + '-progress.h5'
 	try:
-		net.load_weights(iptagger + '-' + MODEL_NAME + '-progress.h5')
+		print 'Trying to load weights from ' + weights_path
+		net.load_weights(weights_path)
+		print 'Weights found and loaded from ' + weights_path
 	except IOError:
-		pass
+		print 'Could not find weight in ' + weights_path
 
 	# -- train 
 	try:
@@ -65,7 +70,7 @@ def main(iptagger):
 		sample_weight=train['w'],
 		callbacks = [
 		    EarlyStopping(verbose=True, patience=100, monitor='val_loss'),
-		    ModelCheckpoint(iptagger + '-' + MODEL_NAME + '-progress.h5', monitor='val_loss', verbose=True, save_best_only=True)
+		    ModelCheckpoint(weights_path, monitor='val_loss', verbose=True, save_best_only=True)
 		],
 		nb_epoch=200, 
 		validation_split=0.3
@@ -74,18 +79,19 @@ def main(iptagger):
 		print '\n Stopping early.'
 
 	# -- load in best network
-	net.load_weights(iptagger + '-' + MODEL_NAME + '-progress.h5')
+	net.load_weights(weights_path)
 
 	# -- test
 	print 'Testing...'
-	test = io.load(open(os.path.join('..', 'data', 'DL1-' + iptagger + '-test-db.h5'), 'rb'))
+	test = io.load(open(os.path.join('..', 'data', 'DL1-' + iptagger + INPUT_NAME + '-test-db.h5'), 'rb'))
+	#test = io.load(open(os.path.join('..', 'data', 'DL1-' + iptagger + '_large_' + '-test-db.h5'), 'rb'))
+
 	yhat = net.predict(test['X'], verbose=True) 
 
 	# -- save the predicions
 	np.save('yhat-{}-{}.npy'.format(iptagger, MODEL_NAME), yhat)
 
 	performance(yhat, test, iptagger)
-
 
 # ----------------------------------------------------------------- 
 
