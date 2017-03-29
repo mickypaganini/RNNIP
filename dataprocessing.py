@@ -11,7 +11,7 @@ Notes:
 * Written and tested with keras v1.0.5
 Run: 
 ----
-python dataprocessing.py --train_files *Akt4EMTo._000001.root --test_files *Akt4EMTo._000010.root --output 30trk_hits --sort_by d0z0sig --ntrk 30
+python dataprocessing.py --train_files *Akt4EMTo._000001.root --test_files *Akt4EMTo._000010.root --output 30trk_grade --sort_by absSd0 --ntrk 30 --inputs grade
 '''
 import json
 import numpy as np
@@ -22,6 +22,56 @@ from keras.utils import np_utils
 import pandautils as pup
 import tqdm 
 import os
+
+C_FRAC = 0.07
+L_FRAC = 0.61
+
+def generate_inputlist(input_request):
+    '''
+    builds the track_inputs list and the jet_inputs list
+    depending on the type of training you want to do (encoded
+    in input_request)
+    '''
+    track_inputs = [
+                    'jet_trk_ip3d_grade',
+                    'jet_trk_pt', 
+                    'jet_trk_ip3d_d0',
+                    'jet_trk_ip3d_z0', 
+                    'jet_trk_ip3d_d0sig', 
+                    'jet_trk_ip3d_z0sig',
+                    'jet_trk_phi',
+                    'jet_trk_eta',
+                    'jet_trk_theta'
+                    ]
+    jet_inputs = [
+                  'jet_pt', # for cutting
+                  'jet_phi', # for cutting
+                  'jet_eta', # for cutting
+                  'jet_pt_orig', # for training
+                  'jet_phi_orig', # for training
+                  'jet_eta_orig', # for training
+                  'jet_LabDr_HadF', 
+                  'jet_ip3d_pu', 
+                  'jet_ip3d_pb', 
+                  'jet_ip3d_pc',
+                  'jet_JVT', 
+                  'jet_aliveAfterOR'
+                  ]
+    if input_request == 'hits':
+        track_inputs += [
+                'jet_trk_nInnHits',
+                'jet_trk_nNextToInnHits', 
+                'jet_trk_nBLHits',
+                'jet_trk_nsharedBLHits', 
+                'jet_trk_nsplitBLHits',
+                'jet_trk_nPixHits', 
+                'jet_trk_nsharedPixHits',
+                'jet_trk_nsplitPixHits', 
+                'jet_trk_nSCTHits',
+                'jet_trk_nsharedSCTHits', 
+                'jet_trk_expectBLayerHit'
+                ]
+    return track_inputs, jet_inputs
 
 def flatten(event_df):
     '''
@@ -48,6 +98,7 @@ def applycuts(df):
     Definition:
     -----------
         remove bad jets from df -- those with 0 tracks and those that don't pass b-tagging cuts
+        Notes: the cuts are being applied to calibrated values
     Args:
     -----
         df: jet-flat pandas dataframe
@@ -147,10 +198,10 @@ def sort_tracks(trk, data, theta, grade, sort_by, n_tracks):
     
     Args:
     -----
-        trk: a dataframe
+        trk: a dataframe or pandas serier
         data: an array of shape (nb_samples, nb_tracks, nb_features)
         theta: pandas series with the jet_trk_theta values, used to enforce custom track selection
-        grade:
+        grade: numpy array with the grade values
         sort_by: a string representing the column to sort the tracks by
         n_tracks: number of tracks to cut off at. if >, truncate, else, -999 pad
     
@@ -249,7 +300,48 @@ def scale(data, var_names, sort_by, file_name, savevars):
             data[:, :, v][f != -999] = slc.astype('float32')
 
 
-def process_data(trk, jet_inputs, n_tracks, sort_by, file_name, savevars=False):
+def reweight_to_l(jet_pt, jet_eta, y):
+    '''
+    Definition:
+    -----------
+        Extract weights by reweighting pT and eta to light-distribution
+    '''
+    jet_eta = abs(jet_eta)
+    pt_bins = [10, 50, 100, 150, 200, 300, 500, 99999]
+    eta_bins = [0, 0.5, 1.5, 2.5, 5, 10] #np.linspace(0, 2.5, 6)
+
+    b_bins = np.histogram2d(jet_pt[y == 5] / 1000, jet_eta[y == 5], bins=[pt_bins, eta_bins])
+    c_bins = np.histogram2d(jet_pt[y == 4] / 1000, jet_eta[y == 4], bins=[pt_bins, eta_bins])
+    l_bins = np.histogram2d(jet_pt[y == 0] / 1000, jet_eta[y == 0], bins=[pt_bins, eta_bins])
+
+    wl= np.ones(sum(y == 0))
+    wt= np.ones(sum(y == 15)) # not reweighting taus
+
+    wc = [(l_bins[0] / c_bins[0])[arg] for arg in zip(
+        np.digitize(jet_pt[y == 4] / 1000, l_bins[1]) - 1, 
+        np.digitize(jet_eta[y == 4], l_bins[2]) - 1
+    )]
+    
+
+    wb = [(l_bins[0] / b_bins[0])[arg] for arg in zip(
+        np.digitize(jet_pt[y == 5] / 1000, l_bins[1]) - 1, 
+        np.digitize(jet_eta[y == 5], l_bins[2]) - 1
+    )]
+
+    n_light = wl.sum()
+    n_charm = (n_light * C_FRAC) / L_FRAC
+    n_bottom = (n_light * (1 - L_FRAC - C_FRAC )) / L_FRAC
+
+    w = np.zeros(len(y))
+    w[y == 5] = np.array(wb) * (n_bottom / sum(wb)) 
+    w[y == 4] = np.array(wc) * (n_charm / sum(wc)) 
+    w[y == 0] = wl
+    w[y == 15] = wt
+
+    return w
+
+
+def process_data(trk, jet_inputs, n_tracks, sort_by, file_name, input_request, savevars=False):
     ''' 
     takes a dataframe directly from ROOT files and 
     processes, sorts, and scales the data for you
@@ -262,6 +354,7 @@ def process_data(trk, jet_inputs, n_tracks, sort_by, file_name, savevars=False):
         n_tracks: int, max number of tracks per event
         sort_by: str, name of the column used to sort the tracks in each event
         file_name: str, tag that identifies the specific way in which the data was prepared, i.e. '30trk_hits'
+        input_request: string to specify what inputs to use in training. One of: 'hits', 'grade'
         savevars: bool -- True for training, False for testing
                   it decides whether we want to fit on data to find mean and std 
                   or if we want to use those stored in the json file 
@@ -281,16 +374,20 @@ def process_data(trk, jet_inputs, n_tracks, sort_by, file_name, savevars=False):
     ip3d = trk[ ['jet_ip3d_pu', 'jet_ip3d_pb', 'jet_ip3d_pc'] ] 
     pt = trk['jet_pt'].values
 
-    # -- add dr and pTfrac
-    trk['jet_trk_dR'] = dr(trk['jet_trk_eta'], trk['jet_eta'], trk['jet_trk_phi'], trk['jet_phi'])
-    trk['jet_trk_pTfrac'] = trk['jet_trk_pt'] / trk['jet_pt']
+    # -- add dr and pTFrac
+    trk['jet_trk_dR'] = dr(trk['jet_trk_eta'], trk['jet_eta_orig'], trk['jet_trk_phi'], trk['jet_phi_orig'])
+    trk['jet_trk_pTFrac'] = trk['jet_trk_pt'] / trk['jet_pt_orig']
 
     # variable also used for ordering tracks
-    trk['d0z0sig'] = (trk.jet_trk_ip3d_d0sig.copy() ** 2 + trk.jet_trk_ip3d_z0sig.copy() ** 2).pow(0.5)
+    #trk['d0z0sig'] = (trk.jet_trk_ip3d_d0sig.copy() ** 2 + trk.jet_trk_ip3d_z0sig.copy() ** 2).pow(0.5)
+    trk['absSd0'] = np.abs(trk.jet_trk_ip3d_d0)
 
     # -- separate theta from the other variables because we don't train on it. Ugly hack :((
     theta = trk['jet_trk_theta']
-    grade = trk['jet_trk_ip3d_grade'].values
+    grade= trk['jet_trk_ip3d_grade'].values
+
+    # -- get weights
+    w = reweight_to_l(trk['jet_pt_orig'].values, trk['jet_eta_orig'].values, y.values)
 
     # -- drop variables from the df that we do not want to use for training
     trk.drop(jet_inputs + [
@@ -298,21 +395,35 @@ def process_data(trk, jet_inputs, n_tracks, sort_by, file_name, savevars=False):
         'jet_trk_theta',
         'jet_trk_pt',
         'jet_trk_eta',
-        'jet_trk_ip3d_grade'
+        'jet_trk_ip3d_d0',
+        'jet_trk_ip3d_z0',
+        #'jet_trk_ip3d_grade'
         ],
-        axis=1, inplace=True) # no longer needed - not an input               
+        axis=1, inplace=True) # no longer needed - not an input 
 
     n_variables = trk.shape[1] 
-    var_names = trk.keys()
-
+    var_names = trk.keys().tolist()
+    
     data = np.zeros((trk.shape[0], n_tracks, n_variables), dtype='float32')
 
-    # -- call functions to build X (= data)                                                                                                                                                                      
+    # -- call functions to build X (= data) and sorted_grade                                                                                                                                                                     
     sort_tracks(trk, data, theta, grade, sort_by, n_tracks)
+    # ugly hacks to deal with grade embedding :(
+    grade_index = np.argwhere(np.array(var_names) == 'jet_trk_ip3d_grade')[0][0]
+    sorted_grade = data[:, :, grade_index]
+    data = data[:, :, [i for i in range(len(var_names)) if i != grade_index]]
+    sorted_grade = sorted_grade + 1 # shift everything up by 1
+    sorted_grade[sorted_grade == -998] = 0 # replace -998 with 0
+    var_names.remove('jet_trk_ip3d_grade')
+
+    if sort_by not in ['jet_trk_ip3d_grade', 'jet_trk_ip3d_d0sig', 
+        'jet_trk_ip3d_z0sig', 'jet_trk_dR', 'jet_trk_pTFrac']:
+        data = data[:, :, :-1] # remove sorting var if it's not one of the training vars
+        # WARNING!! Make sure the sorting var is the last one that was created!
+        var_names.remove(sort_by)
     del theta, grade
-    
+
     print 'Scaling features ...'
-    #print 'Training on: ', var_names
     scale(data, var_names, sort_by, file_name, savevars)
 
     # -- default values                                                                                                                                                                                          
@@ -324,46 +435,11 @@ def process_data(trk, jet_inputs, n_tracks, sort_by, file_name, savevars=False):
     y_train = np_utils.to_categorical(y, len(np.unique(y)))
 
     # ip3d and pt will be used for performance evaluation
-    return {'X' : data, 'y' : y_train, 'ip3d' : ip3d, 'jet_pt' : pt}
+    return {'X' : data, 'y' : y_train, 'ip3d' : ip3d, 'jet_pt' : pt, 'w' : w, 'grade' : sorted_grade}
 
 # ------------------------------------------   
 
 if __name__ == '__main__':
-
-    track_inputs = [
-                    'jet_trk_ip3d_grade',
-                    'jet_trk_pt', 
-                    'jet_trk_ip3d_d0',
-                    'jet_trk_ip3d_z0', 
-                    'jet_trk_ip3d_d0sig', 
-                    'jet_trk_ip3d_z0sig',
-                    'jet_trk_phi',
-                    'jet_trk_eta',
-                    'jet_trk_theta',
-                    'jet_trk_nInnHits',
-                    'jet_trk_nNextToInnHits', 
-                    'jet_trk_nBLHits',
-                    'jet_trk_nsharedBLHits', 
-                    'jet_trk_nsplitBLHits',
-                    'jet_trk_nPixHits', 
-                    'jet_trk_nsharedPixHits',
-                    'jet_trk_nsplitPixHits', 
-                    'jet_trk_nSCTHits',
-                    'jet_trk_nsharedSCTHits', 
-                    'jet_trk_expectBLayerHit'
-                    ] 
-
-    jet_inputs = [
-                  'jet_pt',
-                  'jet_phi',
-                  'jet_eta',
-                  'jet_LabDr_HadF', 
-                  'jet_ip3d_pu', 
-                  'jet_ip3d_pb', 
-                  'jet_ip3d_pc',
-                  'jet_JVT', 
-                  'jet_aliveAfterOR'
-                  ]
 
     import argparse
     parser = argparse.ArgumentParser()
@@ -377,13 +453,19 @@ if __name__ == '__main__':
         required=True, type=str, 
         help="Tag that refers to the name of the output file, i.e.: '30trk_hits'", )
     parser.add_argument('--sort_by', 
-        default='d0z0sig', 
+        default='absSd0', 
         help='str, name of the variable used to order tracks in an event')
     parser.add_argument('--ntrk', 
         default=30, type=int, 
         help="Maximum number of tracks per event. \
         If the event has fewer tracks, use padding; if is has more, only consider the first ntrk")
+    parser.add_argument('--inputs', 
+        default='grade', 
+        help='one of: hits, grade')
     args = parser.parse_args()
+
+    track_inputs, jet_inputs = generate_inputlist(args.inputs)
+
 
     print 'Loading dataframes...'
     # -- currently only training and testing on one file each!
@@ -398,11 +480,11 @@ if __name__ == '__main__':
         branches = track_inputs + jet_inputs
     )
     print 'Processing training sample ...'
-    train_dict = process_data(trk_train, jet_inputs, args.ntrk, args.sort_by, args.output, savevars=True)
+    train_dict = process_data(trk_train, jet_inputs, args.ntrk, args.sort_by, args.output, args.inputs, savevars=True)
     del trk_train
     io.save(os.path.join('data', 'train_dict_' + args.output + '.h5'), train_dict)
 
     print 'Processing test sample...'
-    test_dict = process_data(trk_test, jet_inputs, args.ntrk, args.sort_by, args.output)
+    test_dict = process_data(trk_test, jet_inputs, args.ntrk, args.sort_by, args.output, args.inputs,)
     del trk_test
     io.save(os.path.join('data', 'test_dict_' + args.output + '.h5'), test_dict)
