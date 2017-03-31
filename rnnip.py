@@ -12,7 +12,7 @@ matplotlib.use('TkAgg')
 
 import deepdish.io as io
 
-from keras.layers import GRU, LSTM, Dense, Dropout, Activation, Masking, Embedding, merge, Input
+from keras.layers import GRU, LSTM, Dense, Dropout, Activation, Masking, Embedding, merge, Input, Flatten
 from keras.layers.merge import Concatenate
 from keras.models import Model
 from keras.callbacks import EarlyStopping, ModelCheckpoint
@@ -120,8 +120,7 @@ def main(embed_size, normed, input_id, run_name):
 
 def build_model(X_train_stream0, X_train_stream1, embed_size, normed):
     n_grade_categories = len(np.unique(pup.flatten(X_train_stream0)))
-
-    grade_input = Input(shape=X_train_stream0.shape[1:], name='grade_input')
+    grade_input = Input(shape=X_train_stream0.shape[1:], dtype='int32', name='grade_input')
     track_input = Input(shape=X_train_stream1.shape[1:], name='track_input')
     track_masked = Masking(mask_value=-999)(track_input)
 
@@ -130,11 +129,11 @@ def build_model(X_train_stream0, X_train_stream1, embed_size, normed):
         embedded_grade = Embedding(
             input_dim=n_grade_categories, output_dim=embed_size, mask_zero=True,
             input_length=X_train_stream0.shape[1], 
-            W_constraint=unitnorm(axis=1))(grade_input)
+            W_constraint=unitnorm(axis=1))(Flatten()(grade_input))
     else:
         embedded_grade = Embedding(
             input_dim=n_grade_categories, output_dim=embed_size, mask_zero=True,
-            input_length=X_train_stream0.shape[1])(grade_input)
+            input_length=X_train_stream0.shape[1])(Flatten()(grade_input))
 
     #x = Concatenate([embedded_grade, track_input])
     x = merge([embedded_grade, track_masked], mode='concat')

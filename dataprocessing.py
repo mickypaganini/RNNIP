@@ -266,18 +266,37 @@ def scale(data, var_names, sort_by, file_name, savevars):
 
         # -- write variable json for lwtnn keras2json converter
         variable_dict = {
-            'inputs': [{
-                'name': scale[v]['name'],
-                'scale': float(1.0 / scale[v]['sd']),
-                'offset': float(-scale[v]['mean']),
-                'default': None
-                } 
-                for v in xrange(len(var_names))],
-            'class_labels': ['pu', 'pc', 'pb', 'ptau'],
+            'inputs' : [],
+            'input_sequences' : 
+            [{
+                'name' : 'grade_input',
+                'variables' :
+                [{
+                    'name': 'grade',
+                    'scale': 1,
+                    'offset': 0
+                }]
+            },
+            {
+                'name' : 'track_input',
+                'variables' :
+                 [{
+                    'name': scale[v]['name'],
+                    'scale': float(1.0 / scale[v]['sd']),
+                    'offset': float(-scale[v]['mean']),
+                    'default': None
+                    } 
+                    for v in xrange(len(var_names))]
+            }],
+            'outputs': 
+            [{
+                'name': 'tagging',
+                'labels': ['pu', 'pc', 'pb', 'ptau']
+            }],
             'keras_version': keras.__version__,
             'miscellaneous': {
                 'sort_by': sort_by
-            }
+            }  
         }
         with open('var' + file_name + '.json', 'wb') as varfile:
             json.dump(variable_dict, varfile)
@@ -292,9 +311,9 @@ def scale(data, var_names, sort_by, file_name, savevars):
             print 'Scaling feature %s of %s (%s).' % (v, len(var_names), vname)
             f = data[:, :, v]
             slc = f[f != -999]
-            ix = [i for i in xrange(len(varinfo['inputs'])) if varinfo['inputs'][i]['name'] == athenaname(vname)]
-            offset = varinfo['inputs'][ix[0]]['offset']
-            scale = varinfo['inputs'][ix[0]]['scale']
+            ix = [i for i in xrange(len(varinfo['input_sequences'][1]['variables'])) if varinfo['input_sequences'][1]['variables'][i]['name'] == athenaname(vname)]
+            offset = varinfo['input_sequences'][1]['variables'][ix[0]]['offset']
+            scale = varinfo['input_sequences'][1]['variables'][ix[0]]['scale']
             slc += offset
             slc *= scale
             data[:, :, v][f != -999] = slc.astype('float32')
@@ -384,7 +403,7 @@ def process_data(trk, jet_inputs, n_tracks, sort_by, file_name, input_request, s
 
     # -- separate theta from the other variables because we don't train on it. Ugly hack :((
     theta = trk['jet_trk_theta']
-    grade= trk['jet_trk_ip3d_grade'].values
+    grade = trk['jet_trk_ip3d_grade'].values
 
     # -- get weights
     w = reweight_to_l(trk['jet_pt_orig'].values, trk['jet_eta_orig'].values, y.values)
@@ -435,7 +454,12 @@ def process_data(trk, jet_inputs, n_tracks, sort_by, file_name, input_request, s
     y_train = np_utils.to_categorical(y, len(np.unique(y)))
 
     # ip3d and pt will be used for performance evaluation
-    return {'X' : data, 'y' : y_train, 'ip3d' : ip3d, 'jet_pt' : pt, 'w' : w, 'grade' : sorted_grade}
+    return {'X' : data,
+            'y' : y_train,
+            'ip3d' : ip3d,
+            'jet_pt' : pt,
+            'w' : w,
+            'grade' : np.expand_dims(sorted_grade, -1)}
 
 # ------------------------------------------   
 
